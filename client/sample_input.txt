@@ -1,0 +1,4 @@
+Đây là file mẫu để bạn upload thử.
+Bạn có thể sửa nội dung file này rồi upload lại nhiều lần để quan sát event.
+
+FastAPI nhận file -> đẩy queue -> worker xử lý -> client Python nhận thông báo mới nhất.
