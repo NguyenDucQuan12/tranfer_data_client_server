@@ -1,0 +1,11 @@
+# Thư mục môi trường ảo
+
+.venv_vlm/
+.venv_OCR/
+.vscode/
+
+# Tệp thực thi tạo ra từ python
+__pycache__/
+
+# Thư mục chứa model, nặng hơn 1G, tự tải khi chạy lần đầu
+official_models/
