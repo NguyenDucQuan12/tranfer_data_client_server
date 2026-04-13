@@ -1,0 +1,16 @@
+{
+  "job_id": "d03bad2c996041dfb3d2e1d24760345c",
+  "user_id": "123",
+  "source_file": "pasted(1).txt",
+  "processed_at": "2026-04-13T03:32:12.412728+00:00",
+  "analysis": {
+    "file_name": "d03bad2c996041dfb3d2e1d24760345c_pasted(1).txt",
+    "file_size_bytes": 7334,
+    "sha256": "f9acb73e67ed06f78b4e4724cce245b3aa83705fd5d543314b3a7c9972585421",
+    "file_kind": "text",
+    "line_count": 197,
+    "word_count": 717,
+    "char_count": 7092,
+    "preview": "from pathlib import Path\nfrom fastapi import FastAPI, UploadFile, File, HTTPException, Query\nfrom fastapi.responses import JSONResponse\nfrom redis.exceptions import ConnectionError, TimeoutError\nfrom contextlib import asynccontextmanager\nfrom rq import Queue\nfrom rq.job import Job\n\nfrom config impor"
+  }
+}

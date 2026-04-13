@@ -1,0 +1,197 @@
+from pathlib import Path
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.responses import JSONResponse
+from redis.exceptions import ConnectionError, TimeoutError
+from contextlib import asynccontextmanager
+from rq import Queue
+from rq.job import Job
+
+from config import RQ_QUEUE_NAME, MAX_QUEUE_LENGTH, JOB_DATA_DIR, PADDLE_PDX_CACHE_HOME
+from redis_client import get_redis, redis_available
+from storage import ensure_dirs, new_job_id, job_dir, save_upload_pdf, write_json_atomic, read_json
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ensure_dirs()
+
+    r = get_redis()
+    if redis_available(r):
+        print("[api] Redis OK")
+    else:
+        print("[api] Redis DOWN at startup (API will return 503 for enqueue)")
+
+    # Quan trọng: phải yield để FastAPI/Starlette coi đây là async context manager
+    yield
+
+
+
+app = FastAPI(
+    title="OCR Job Queue API",
+    version="1.0.0",
+    lifespan= lifespan    # Thêm câu lệnh lifespan
+    )
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.get("/health/redis")
+def health_redis():
+    r = get_redis()
+    ok = redis_available(r)
+    return {"redis_ok": ok}
+
+@app.post("/v1/jobs/ocr/pdf")
+def submit_ocr_job(
+    file: UploadFile = File(...),
+    export_images: bool = Query(False),
+):
+    r = get_redis()
+    if not redis_available(r):
+        # Fail-fast để server không treo, không nhận job khi queue không hoạt động
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "5"},
+            content={
+                "ok": False,
+                "error": "Redis không khả dụng, hệ thống queue đang dừng. Vui lòng khởi động Redis và thử lại.",
+                "hint": "Nếu dùng docker compose: `docker compose up -d redis` và kiểm tra `docker compose logs -f redis`.",
+            },
+        )
+
+    q = Queue(RQ_QUEUE_NAME, connection=r)
+
+    # backpressure: queue quá dài -> từ chối để không nghẽn dây chuyền
+    try:
+        if q.count > MAX_QUEUE_LENGTH:
+            return JSONResponse(
+                status_code=503,
+                headers={"Retry-After": "10"},
+                content={
+                    "ok": False,
+                    "error": "Hệ thống đang quá tải (queue backlog lớn). Vui lòng thử lại sau.",
+                    "queue_length": q.count,
+                    "max_queue_length": MAX_QUEUE_LENGTH,
+                },
+            )
+    except Exception:
+        # Nếu count lỗi bất ngờ, vẫn có thể enqueue; nhưng production nên log lại.
+        pass
+
+    job_id = new_job_id()
+    d = job_dir(job_id)
+    d.mkdir(parents=True, exist_ok=True)
+
+    pdf_path = d / "input.pdf"
+    save_upload_pdf(file, pdf_path)
+
+    # Ghi status disk để client vẫn đọc được ngay cả khi Redis restart
+    write_json_atomic(d / "status.json", {"status": "queued", "job_id": job_id})
+
+    # Enqueue job
+    try:
+        job = q.enqueue(
+            "worker.tasks.process_pdf_job",
+            task_job_id=job_id,
+            pdf_path=str(pdf_path),
+            export_images=export_images,
+            job_root=str(JOB_DATA_DIR),
+            job_id=job_id,  # rq internal job id = job_id
+            result_ttl=24 * 3600,
+            failure_ttl=24 * 3600,
+        )
+    except (ConnectionError, TimeoutError) as ex:
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "5"},
+            content={"ok": False, "error": f"Redis mất kết nối khi enqueue: {ex}"},
+        )
+
+    return {"ok": True, "job_id": job.id, "status": "queued"}
+
+@app.get("/v1/jobs/{job_id}")
+def get_job(job_id: str):
+    d = job_dir(job_id)
+    status_disk = read_json(d / "status.json")
+    result_path = d / "result.json"
+
+    r = get_redis()
+    if redis_available(r):
+        # Ưu tiên lấy trạng thái từ Redis/RQ
+        try:
+            job = Job.fetch(job_id, connection=r)
+            status = job.get_status()  # queued/started/finished/failed
+            meta = job.meta or {}
+            resp = {
+                "ok": True,
+                "job_id": job_id,
+                "status": meta.get("status") or status,
+            }
+            if resp["status"] == "succeeded" and result_path.exists():
+                resp["result"] = read_json(result_path)
+            elif resp["status"] == "failed":
+                resp["error"] = meta.get("error") or status_disk.get("error")
+            return resp
+        except Exception:
+            # Nếu job không fetch được (Redis restart mất dữ liệu), fallback disk
+            pass
+
+    # Redis down hoặc fetch thất bại -> fallback disk
+    if not d.exists():
+        raise HTTPException(status_code=404, detail="Không tìm thấy job_id.")
+    resp = {"ok": True, "job_id": job_id, "status": status_disk.get("status", "unknown")}
+    if result_path.exists():
+        resp["status"] = "succeeded"
+        resp["result"] = read_json(result_path)
+    if status_disk.get("status") == "failed":
+        resp["error"] = status_disk.get("error")
+    if not redis_available(r):
+        resp["note"] = "Redis đang không khả dụng; trạng thái được lấy từ disk (degraded mode)."
+    return resp
+
+@app.post("/v1/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    r = get_redis()
+    d = job_dir(job_id)
+    status_path = d / "status.json"
+
+    if not d.exists():
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Không tìm thấy job_id."})
+
+    # Nếu Redis down: vẫn cho phép “cancel logic” ở mức disk (degraded)
+    if not redis_available(r):
+        write_json_atomic(status_path, {"status": "canceled", "job_id": job_id, "note": "Redis down; canceled by disk marker"})
+        return {"ok": True, "job_id": job_id, "status": "canceled", "note": "Redis down; job marked canceled on disk."}
+
+    q = Queue(RQ_QUEUE_NAME, connection=r)
+
+    try:
+        job = Job.fetch(job_id, connection=r)
+        st = job.get_status()  # queued/started/finished/failed
+
+        if st == "queued":
+            # remove khỏi queue để không chạy nữa
+            try:
+                q.remove(job_id)
+            except Exception:
+                pass
+            job.meta["status"] = "canceled"
+            job.meta["cancel_requested"] = True
+            job.save_meta()
+            write_json_atomic(status_path, {"status": "canceled", "job_id": job_id})
+            return {"ok": True, "job_id": job_id, "status": "canceled"}
+
+        if st == "started":
+            # best-effort: đánh dấu, worker có thể đọc meta/disk để tự dừng nếu có checkpoint
+            job.meta["cancel_requested"] = True
+            job.meta["status"] = "cancel_requested"
+            job.save_meta()
+            write_json_atomic(status_path, {"status": "cancel_requested", "job_id": job_id})
+            return {"ok": True, "job_id": job_id, "status": "cancel_requested", "note": "Job đang chạy; chỉ có thể yêu cầu hủy (best-effort)."}
+
+        # finished/failed
+        return {"ok": True, "job_id": job_id, "status": st, "note": "Job đã kết thúc; không thể hủy."}
+
+    except Exception as ex:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(ex)})
