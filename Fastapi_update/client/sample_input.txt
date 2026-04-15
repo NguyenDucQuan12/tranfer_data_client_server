@@ -1,0 +1,2 @@
+Hello from upgraded production-like sample
+This file will be uploaded and processed by the worker.
