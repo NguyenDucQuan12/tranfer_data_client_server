@@ -25,6 +25,43 @@ Python client / Web dashboard
       +--> Local object storage / S3-compatible storage (file upload, file kết quả)
 ```
 
+Ta có quy trình như sau:  
+1. Client Upload  
+Là script `client/upload_demo.py`
+Nó chỉ làm nhiệm vụ:  
+- login
+- upload file
+
+2. Client nhận realtime
+Là script `client/client.py`  
+Nó chỉ làm nhiệm vụ:  
+- login
+- mở WebSocket
+- reconnect
+- replay event bị lỡ
+- nhận job_completed
+
+3. Điều kiện ban đầu  
+Các `service` sau phải đảm bảo hoạt động trước khi người dùng upload tài liệu và theo dõi  
+- api_service/main.py
+- notification_service/main.py
+- worker/worker.py
+- Redis
+- PostgreSQL
+
+4. Khởi động API Server
+Server nhận tệp tin upload từ người dùng sử dụng `FastAPI` và nằm ở `api_service/main.py`  
+
+Ta khởi chạy server bằng câu lệnh: `uvicorn api_service.main:app --reload --port 8000`  
+
+Tệp này khởi tạo DB bằng câu lệnh `init_db()` từ tệp `shared/db.py`
+
+5. Khởi động Notification server
+
+
+6. Khởi động worker
+
+Worker nằm tại: `worker/worker.py`.  
 ---
 
 ### 1) Authentication thật cho WebSocket và API upload
