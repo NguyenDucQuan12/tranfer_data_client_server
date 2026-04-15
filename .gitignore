@@ -1,7 +1,7 @@
 # Thư mục môi trường ảo
 
 .venv_vlm/
-.venv_OCR/
+venv_project/
 .vscode/
 
 # Tệp thực thi tạo ra từ python
