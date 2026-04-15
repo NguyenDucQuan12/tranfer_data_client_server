@@ -1,7 +1,6 @@
 """
-upload_demo.py
 --------------
-Script nhỏ để bạn upload file thử nghiệm từ Python.
+upload file thử nghiệm từ Python.
 
 Cách dùng:
 python client/upload_demo.py path/to/file.txt
