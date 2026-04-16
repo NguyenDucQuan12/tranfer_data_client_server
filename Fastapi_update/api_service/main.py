@@ -40,6 +40,9 @@ storage = get_storage_backend()
 
 @app.middleware('http')
 async def request_context_middleware(request: Request, call_next):
+    """
+    Middleware gán trace id tới mọi request
+    """
     # Lấy x-request-id từ header nếu client gửi sẵn. Nếu không có thì sinh mới.
     trace_id = request.headers.get('x-request-id') or new_trace_id()
     # Gán các giá trị vào context
@@ -80,19 +83,19 @@ async def metrics():
 async def issue_token(payload: TokenRequest) -> TokenResponse:
     """
     Hàm này là nơi cấp JWT cho client.
-
-    Nó thay thế cách cũ là client tự gửi user_id vào upload API.
-    Sau khi login thành công, mọi request tiếp theo sẽ mang Bearer token.
     """
+    # Xác thực người dùng cung cấp tài khoản và password có đúng không
     user = authenticate_demo_user(payload.username, payload.password)
     if not user:
         raise HTTPException(status_code=401, detail='Invalid username or password')
 
+    # Tạo accesstoken cho người dùng
     token, expires_in = create_access_token(
         tenant_id=user['tenant_id'],
         user_id=user['user_id'],
         role=user['role'],
     )
+    # Trả về accesstoken
     return TokenResponse(
         access_token=token,
         expires_in_seconds=expires_in,
@@ -115,9 +118,11 @@ async def upload_job(
     2. Giới hạn dung lượng file ngay tại storage backend
     3. Ghi metadata bền vững xuống PostgreSQL trước khi enqueue
     """
+    # Lấy trace id nếu nó được gửi theo cùng request
     trace_id = request.headers.get('x-request-id') or new_trace_id()
     set_trace_context(trace_id=trace_id, tenant_id=identity.tenant_id, user_id=identity.user_id)
 
+    # Tăng metric lên một đơn vị
     UPLOAD_REQUESTS_TOTAL.labels(identity.tenant_id).inc()
 
     safe_filename = Path(file.filename or 'unnamed.bin').name

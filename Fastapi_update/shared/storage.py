@@ -30,7 +30,13 @@ class StoredObject:
 
 
 class LocalObjectStorage:
+    """
+    Class lưu trữ dữ liệu người dùng ở local
+    """
     def __init__(self, root_dir: Path):
+        """
+        Tự động tạo thư mục đích nếu nó chưa tồn tại
+        """
         self.root_dir = root_dir
         self.root_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,6 +143,10 @@ class S3ObjectStorage:
 
 
 def get_storage_backend():
+    """
+    Tạo thư mục lưu trữ các tệp tin tải lên từ người dùng
+    """
     if settings.OBJECT_STORAGE_BACKEND.lower() == 's3':
         return S3ObjectStorage()
+    # Nếu không sử dụng dịch vụ lưu trữ thứ 3 thì chuyển sang lưu trữ local
     return LocalObjectStorage(settings.LOCAL_OBJECT_STORAGE_DIR)

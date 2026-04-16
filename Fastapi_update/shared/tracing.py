@@ -1,12 +1,34 @@
 """
-----------
-Sample tracing đơn giản dựa trên correlation id.
-
-Đây chưa phải distributed tracing đầy đủ kiểu OpenTelemetry,
-nhưng nó đủ để bạn hiểu nguyên lý:
+-------
+contextvars là module của Python dùng để lưu dữ liệu theo ngữ cảnh thực thi hiện tại. Mỗi request đều có một bản sao ngữ cảnh riêng
 - mỗi request / job có một trace_id
 - trace_id được truyền xuyên qua API -> queue -> worker -> event -> websocket
 - log ở mọi service đều có thể ghép lại theo trace_id
+Ví dụ:  
+```python
+import asyncio
+import contextvars
+
+user_var = contextvars.ContextVar("user", default="-")
+
+async def handle_request(name: str, delay: float):
+    user_var.set(name)
+    await asyncio.sleep(delay)
+    print(f"Request của {name} thấy user_var =", user_var.get())
+
+async def main():
+    await asyncio.gather(
+        handle_request("Alice", 1),
+        handle_request("Bob", 0.5),
+    )
+
+asyncio.run(main())
+```
+Kết quả ta nhận được sẽ là:  
+```bash
+Request của Bob thấy user_var = Bob
+Request của Alice thấy user_var = Alice
+```
 """
 
 from __future__ import annotations
@@ -30,13 +52,12 @@ def new_trace_id() -> str:
 
 def set_trace_context(*, trace_id: str | None = None, tenant_id: str | None = None, user_id: str | None = None, job_id: str | None = None) -> None:
     """
-    Gán các giá trị context hiện tại.
-    Dùng trong:
-
-    API middleware
-    WebSocket handler
-    worker trước khi xử lý job
+    Gán các giá trị context hiện tại.  
+    Sau dấu `*` thì bắt buộc các tham số phía sau phải truyền vào bằng `keyword argument`  
+    Ví dụ: `set_trace_context(trace_id="abc", user_id="u1")`  
+    Chứ không được gọi: `set_trace_context("abc", "t1", "u1", "j1")`
     """
+    # Cập nhật các giá trị tương ứng vào ContextVar
     if trace_id is not None:
         _trace_id_var.set(trace_id)
     if tenant_id is not None:
@@ -49,7 +70,8 @@ def set_trace_context(*, trace_id: str | None = None, tenant_id: str | None = No
 
 def clear_trace_context() -> None:
     """
-    Reset context về -.
+    Reset context về -.  
+    tình trạng rò rỉ context cũ sang request mới.
     """
     _trace_id_var.set('-')
     _tenant_id_var.set('-')
