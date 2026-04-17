@@ -40,7 +40,19 @@ JOB_PROCESSING_SECONDS = Histogram('job_processing_seconds', 'Processing time pe
 WEBSOCKET_CONNECTIONS = Gauge('websocket_connections', 'Current websocket connections', ['channel'])                                 # Số kết nối đang mở
 WEBSOCKET_EVENTS_SENT_TOTAL = Counter('websocket_events_sent_total', 'Events sent via websocket', ['channel'])                       # Đếm tổng số event đã gửi qua websocket
 
-# Cách dùng: UPLOAD_REQUESTS_TOTAL.labels(identity.tenant_id).inc() là tăng lên 1 giá trị
+# Cách dùng:
+# inc(): tăng giá trị, dec(): giảm giát trị, observe() dùng cho histogram
+# UPLOAD_REQUESTS_TOTAL.labels(identity.tenant_id).inc() là tăng lên 1 giá trị
+# UPLOAD_BYTES_TOTAL.labels("tenant_a").inc(2048) là tăng 2048 
+# JOB_PROCESSING_SECONDS.observe(2.3) là vừa ghi nhận một lần xử lý mất 2.3s
+
+
 
 def metrics_response() -> Response:
+    """
+    Hàm xuất metric  
+    generate_latest() đọc toàn bộ registry metric hiện tại trong process.  
+    Sau đó nó biến các metric đó thành text format chuẩn Prometheus.  
+    Cuối cùng Response(...) đóng gói text đó thành HTTP response và gắn đúng content-type
+    """
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

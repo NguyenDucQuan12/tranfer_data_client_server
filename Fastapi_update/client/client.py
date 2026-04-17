@@ -12,7 +12,7 @@ Python client tự reconnect và luôn nhận event mới nhất của chính us
 
 from __future__ import annotations
 
-import argparse
+import argparse # dùng để đọc tham số dòng lệnh khi chạy file: python client.py --username alice --password 123456
 import asyncio
 import json
 from pathlib import Path
@@ -22,11 +22,17 @@ import websockets
 from client.common import get_token
 from shared.config import settings
 
+# Lấy thư mục cha làm đường dẫn
+# Nếu client.py nằm ở: D:/project/client/client.py
+# thì STATE_FILE sẽ là: D:/project/client/client_state.json
 STATE_FILE = Path(__file__).resolve().parent / 'client_state.json'
 
 
 
 def load_state() -> dict:
+    """
+    Lấy các giá trị cũ từ file nếu có
+    """
     if not STATE_FILE.exists():
         return {'last_event_id': '0-0'}
     return json.loads(STATE_FILE.read_text(encoding='utf-8'))
@@ -34,13 +40,19 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
+    # Lưu trạng thái hiện tại xuống file
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
 async def handle_event(message: dict, state: dict) -> None:
+    """
+    Xử lý mỗi message nhận được tư websocket
+    """
+    # Lấy thông tin từ event
     event_type = message.get('type')
     event_id = message.get('event_id')
 
+    # Kiểm tra nếu id event hiện tại lớn hơn event cũ thì mới ghi lại, không thì tức là event cũ, bỏ qua
     if event_id and event_id > state.get('last_event_id', '0-0'):
         state['last_event_id'] = event_id
         save_state(state)
@@ -49,6 +61,10 @@ async def handle_event(message: dict, state: dict) -> None:
 
 
 async def run_client(username: str, password: str) -> None:
+    """
+    Chạy hàm 
+    """
+    # Đọc trạng thái cũ từ tệp client_state.json
     state = load_state()
     token_data = get_token(username, password)
     token = token_data['access_token']

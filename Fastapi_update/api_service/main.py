@@ -122,7 +122,7 @@ async def upload_job(
     trace_id = request.headers.get('x-request-id') or new_trace_id()
     set_trace_context(trace_id=trace_id, tenant_id=identity.tenant_id, user_id=identity.user_id)
 
-    # Tăng metric lên một đơn vị
+    # Tổng số upload request tăng lên một đơn vị.
     UPLOAD_REQUESTS_TOTAL.labels(identity.tenant_id).inc()
 
     safe_filename = Path(file.filename or 'unnamed.bin').name
@@ -136,13 +136,16 @@ async def upload_job(
             max_bytes=settings.MAX_UPLOAD_BYTES,
         )
     except HTTPException as exc:
+        # Tăng số upload bị từ chối vì file quá lơn lên 1 đơn vị
         UPLOAD_REJECTED_TOTAL.labels('payload_too_large').inc()
         raise exc
     finally:
         await file.close()
 
+    # Tăng thêm 1 lần upload thành công sau khi đã lưu file thành công
     UPLOAD_BYTES_TOTAL.labels(identity.tenant_id).inc(stored.size_bytes)
 
+    # Lưu thông tin 1 job mới vào DB
     await create_job_record(
         job_id=job_id,
         tenant_id=identity.tenant_id,
@@ -152,6 +155,7 @@ async def upload_job(
         trace_id=trace_id,
     )
 
+    # Đẩy thông tin job vào queue vủa Redis
     queue_payload = {
         'job_id': job_id,
         'tenant_id': identity.tenant_id,
@@ -177,9 +181,11 @@ async def upload_job(
         filename=safe_filename,
     )
 
+    # tăng thêm số liệu khi tạo job thành công
     JOBS_CREATED_TOTAL.labels(identity.tenant_id).inc()
-    logger.info('Created job and queued it')
+    logger.info('Công việc đã được tạo và đưa vào hàng đợi')
 
+    # Trả về thông tin job vừa tạo thành công
     return JobCreateResponse(
         job_id=job_id,
         status='queued',
